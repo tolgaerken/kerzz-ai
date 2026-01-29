@@ -55,9 +55,17 @@ export class DocumentsService {
 
   async parseAndAddFile(buffer: Buffer, filename: string, mimeType: string) {
     let text = '';
+    let frontMatterMetadata: Record<string, any> = {};
     
     if (mimeType === 'text/plain' || mimeType === 'text/markdown') {
-      text = buffer.toString('utf-8');
+      const rawText = buffer.toString('utf-8');
+      if (mimeType === 'text/markdown') {
+        const parsed = this.extractFrontMatter(rawText);
+        text = parsed.content;
+        frontMatterMetadata = parsed.metadata;
+      } else {
+        text = rawText;
+      }
     } else if (mimeType === 'application/pdf') {
       const pdfParse = require('pdf-parse');
       const data = await pdfParse(buffer);
@@ -80,6 +88,7 @@ export class DocumentsService {
     const results: Array<{ id: string; text: string; metadata: Record<string, any> }> = [];
     for (let i = 0; i < chunks.length; i++) {
       const result = await this.addDocument(chunks[i], {
+        ...frontMatterMetadata,
         filename,
         chunkIndex: i,
         totalChunks: chunks.length,
@@ -113,6 +122,80 @@ export class DocumentsService {
     }
     
     return chunks.filter(c => c.length > 50); // Filter very short chunks
+  }
+
+  private extractFrontMatter(text: string): {
+    content: string;
+    metadata: Record<string, any>;
+  } {
+    if (!text.startsWith('---')) {
+      return { content: text, metadata: {} };
+    }
+
+    const endIndex = text.indexOf('\n---', 3);
+    if (endIndex === -1) {
+      return { content: text, metadata: {} };
+    }
+
+    const yamlBlock = text.slice(3, endIndex).trim();
+    const content = text.slice(endIndex + 4).trimStart();
+    return { content, metadata: this.parseSimpleYaml(yamlBlock) };
+  }
+
+  private parseSimpleYaml(yamlText: string): Record<string, any> {
+    const metadata: Record<string, any> = {};
+    const stack: Array<{ indent: number; target: Record<string, any> }> = [
+      { indent: -1, target: metadata },
+    ];
+
+    for (const line of yamlText.split('\n')) {
+      if (!line.trim() || line.trim().startsWith('#')) {
+        continue;
+      }
+      const indent = line.match(/^\\s*/)?.[0].length ?? 0;
+      const trimmed = line.trim();
+      const [rawKey, ...rest] = trimmed.split(':');
+      if (!rawKey || rest.length === 0) {
+        continue;
+      }
+      const key = rawKey.trim();
+      const rawValue = rest.join(':').trim();
+
+      while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
+        stack.pop();
+      }
+
+      const current = stack[stack.length - 1].target;
+      if (rawValue === '') {
+        current[key] = {};
+        stack.push({ indent, target: current[key] });
+        continue;
+      }
+
+      current[key] = this.parseYamlValue(rawValue);
+    }
+
+    return metadata;
+  }
+
+  private parseYamlValue(value: string): string | number | boolean | null {
+    const trimmed = value.trim();
+    if (trimmed === 'null') {
+      return null;
+    }
+    if (trimmed === 'true') {
+      return true;
+    }
+    if (trimmed === 'false') {
+      return false;
+    }
+    if (/^-?\\d+(\\.\\d+)?$/.test(trimmed)) {
+      return Number(trimmed);
+    }
+    if ((trimmed.startsWith('\"') && trimmed.endsWith('\"')) || (trimmed.startsWith(\"'\") && trimmed.endsWith(\"'\"))) {
+      return trimmed.slice(1, -1);
+    }
+    return trimmed;
   }
 
   async listDocuments(limit = 100, offset = 0) {
