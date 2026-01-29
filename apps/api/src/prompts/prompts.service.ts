@@ -4,8 +4,7 @@ import * as path from 'path';
 
 @Injectable()
 export class PromptsService {
-  // Use absolute path from project root
-  private promptsPath = path.join(process.cwd(), 'prompts/system-prompts.json');
+  private promptsPath = path.resolve(__dirname, '../../prompts/system-prompts.json');
 
   getPrompts() {
     try {

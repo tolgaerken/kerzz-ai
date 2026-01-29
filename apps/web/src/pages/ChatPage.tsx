@@ -201,6 +201,35 @@ export default function ChatPage() {
                     </div>
                   )}
 
+                  {msg.parameters?.missing_info && msg.parameters.missing_info.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs font-medium text-gray-600 mb-1">Eksik Bilgiler:</p>
+                      <ul className="text-xs text-gray-700 space-y-1 ml-4 list-disc">
+                        {msg.parameters.missing_info.map((info, idx) => (
+                          <li key={idx}>{info}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {msg.parameters?.suggested_solution && (
+                    <div className="mt-2">
+                      <p className="text-xs font-medium text-gray-600 mb-1">Önerilen Çözüm:</p>
+                      <p className="text-xs text-gray-700">{msg.parameters.suggested_solution}</p>
+                    </div>
+                  )}
+
+                  {msg.parameters?.suggested_logs && msg.parameters.suggested_logs.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs font-medium text-gray-600 mb-1">Önerilen Loglar:</p>
+                      <ul className="text-xs text-gray-700 space-y-1 ml-4 list-disc">
+                        {msg.parameters.suggested_logs.map((log, idx) => (
+                          <li key={idx}>{log}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   {msg.parameters?.urgency && (
                     <div className="mt-2">
                       <span

@@ -138,8 +138,13 @@ export class VectorService implements OnModuleInit {
     
     if (!docs.length || docs[0].score < 0.3) {
       return {
-        action: 'answer',
-        answer: 'Bu konuda veritabanımda yeterli bilgi bulamadım. Lütfen destek ekibimizle iletişime geçin.',
+        action: 'ask_clarification',
+        answer:
+          'Bu konuda net bilgi oluşturmak için biraz daha ayrıntı paylaşır mısınız? Hangi cihaz/özellik, hangi işlem sırasında ve ekranda görünen bir hata mesajı var mı?',
+        parameters: {
+          missing_info: ['device_type', 'operation_context', 'error_details'],
+          urgency: 'medium',
+        },
         sources: [],
         confidence: 'low',
         mode,
@@ -345,12 +350,22 @@ Kurallar:
     const docs = await this.search(query, 3);
 
     if (!docs.length || docs[0].score < 0.3) {
-      const response = 'Bu konuda veritabanımda yeterli bilgi bulamadım. Lütfen destek ekibimizle iletişime geçin.';
+      const response =
+        'Bu konuda net bilgi oluşturmak için biraz daha ayrıntı paylaşır mısınız? Hangi cihaz/özellik, hangi işlem sırasında ve ekranda görünen bir hata mesajı var mı?';
       for (const char of response) {
         yield { type: 'token', content: char };
         await new Promise(resolve => setTimeout(resolve, 20));
       }
-      yield { type: 'done', action: 'answer', confidence: 'low', sources: [] };
+      yield {
+        type: 'done',
+        action: 'ask_clarification',
+        confidence: 'low',
+        sources: [],
+        parameters: {
+          missing_info: ['device_type', 'operation_context', 'error_details'],
+          urgency: 'medium',
+        },
+      };
       return;
     }
 
@@ -390,7 +405,7 @@ Kurallar:
     });
 
     const stream = await this.openai.chat.completions.create({
-      model: this.config.get('LLM_MODEL', 'deepseek-r1:8b'),
+      model: this.config.get('LLM_MODEL', 'nvidia/Qwen3-32B-FP4'),
       messages,
       max_tokens: 700,
       temperature: 0.3,
