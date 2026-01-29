@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   FileText, 
@@ -11,7 +11,10 @@ import {
   BookMarked,
   GitCommit,
   X,
-  Upload
+  Upload,
+  Edit2,
+  Trash2,
+  Save
 } from 'lucide-react';
 import { kbApi, KBDocument } from '@/lib/api';
 
@@ -39,13 +42,17 @@ const PRIORITY_COLORS = {
 
 export default function KBPage() {
   const queryClient = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [filterModule, setFilterModule] = useState('');
   const [filterDocType, setFilterDocType] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewDoc, setViewDoc] = useState<KBDocument | null>(null);
+  const [editingDoc, setEditingDoc] = useState<KBDocument | null>(null);
 
-  // Create form state
+  // Create/Edit form state
   const [formType, setFormType] = useState('troubleshooting');
   const [formTitle, setFormTitle] = useState('');
   const [formModule, setFormModule] = useState('');
@@ -54,6 +61,7 @@ export default function KBPage() {
   const [formPriority, setFormPriority] = useState('medium');
   const [formTags, setFormTags] = useState('');
   const [formContent, setFormContent] = useState('');
+  const [formLang, setFormLang] = useState('tr');
 
   const { data: documents, isLoading, refetch } = useQuery({
     queryKey: ['kb-documents'],
@@ -81,6 +89,143 @@ export default function KBPage() {
     },
   });
 
+  const createMutation = useMutation({
+    mutationFn: ({ metadata, content }: { metadata: any; content: string }) =>
+      kbApi.create(metadata, content),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['kb-stats'] });
+      setShowCreateModal(false);
+      resetForm();
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, metadata, content }: { id: string; metadata: any; content: string }) =>
+      kbApi.update(id, metadata, content),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents'] });
+      setShowEditModal(false);
+      setEditingDoc(null);
+      resetForm();
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: kbApi.delete,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['kb-stats'] });
+    },
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: kbApi.upload,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['kb-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['kb-stats'] });
+    },
+  });
+
+  const resetForm = () => {
+    setFormType('troubleshooting');
+    setFormTitle('');
+    setFormModule('');
+    setFormIntent('');
+    setFormRole('technician');
+    setFormPriority('medium');
+    setFormTags('');
+    setFormContent('');
+    setFormLang('tr');
+  };
+
+  const handleCreate = () => {
+    if (!formTitle.trim() || !formModule.trim() || !formContent.trim()) {
+      alert('Başlık, modül ve içerik alanları zorunludur');
+      return;
+    }
+
+    const tags = formTags
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0);
+
+    createMutation.mutate({
+      metadata: {
+        title: formTitle,
+        lang: formLang,
+        docType: formType,
+        module: formModule,
+        intent: formIntent || undefined,
+        role: formRole,
+        priority: formPriority,
+        tags: tags.length > 0 ? tags : undefined,
+      },
+      content: formContent,
+    });
+  };
+
+  const handleEdit = (doc: KBDocument) => {
+    setEditingDoc(doc);
+    setFormTitle(doc.metadata.title);
+    setFormModule(doc.metadata.module);
+    setFormIntent(doc.metadata.intent || '');
+    setFormRole(doc.metadata.role);
+    setFormPriority(doc.metadata.priority);
+    setFormTags(doc.metadata.tags?.join(', ') || '');
+    setFormContent(doc.content);
+    setFormLang(doc.metadata.lang);
+    setFormType(doc.metadata.docType);
+    setShowEditModal(true);
+  };
+
+  const handleUpdate = () => {
+    if (!editingDoc) return;
+    if (!formTitle.trim() || !formModule.trim() || !formContent.trim()) {
+      alert('Başlık, modül ve içerik alanları zorunludur');
+      return;
+    }
+
+    const tags = formTags
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t.length > 0);
+
+    updateMutation.mutate({
+      id: editingDoc.metadata.id,
+      metadata: {
+        title: formTitle,
+        module: formModule,
+        intent: formIntent || undefined,
+        role: formRole,
+        priority: formPriority,
+        tags: tags.length > 0 ? tags : undefined,
+      },
+      content: formContent,
+    });
+  };
+
+  const handleDelete = (doc: KBDocument) => {
+    if (confirm(`"${doc.metadata.title}" dökümanını silmek istediğinize emin misiniz?`)) {
+      deleteMutation.mutate(doc.metadata.id);
+    }
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.md')) {
+      alert('Sadece .md (Markdown) dosyaları yüklenebilir');
+      return;
+    }
+
+    uploadMutation.mutate(file);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const filteredDocs = documents?.filter(doc => {
     if (filterModule && doc.metadata.module !== filterModule) return false;
     if (filterDocType && doc.metadata.docType !== filterDocType) return false;
@@ -94,13 +239,6 @@ export default function KBPage() {
     }
     return true;
   });
-
-  const handleCreateDocument = () => {
-    // Bu fonksiyon dökümanı backend'de değil, filesystem'de oluşturmalı
-    // Şimdilik create-doc.js scriptine yönlendir
-    alert('Yeni döküman oluşturmak için:\n\nTerminalde şu komutu çalıştırın:\ncd kb/scripts && ./create-doc.js\n\nVeya kb/templates/ altındaki şablonları kullanarak manuel oluşturun.');
-    setShowCreateModal(false);
-  };
 
   if (isLoading) {
     return (
@@ -118,12 +256,24 @@ export default function KBPage() {
           <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center p-6 border-b">
               <h3 className="text-xl font-bold">{viewDoc.metadata.title}</h3>
-              <button
-                onClick={() => setViewDoc(null)}
-                className="text-gray-500 hover:text-gray-700"
-              >
-                <X size={24} />
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setViewDoc(null);
+                    handleEdit(viewDoc);
+                  }}
+                  className="text-blue-600 hover:text-blue-700 p-2"
+                  title="Düzenle"
+                >
+                  <Edit2 size={20} />
+                </button>
+                <button
+                  onClick={() => setViewDoc(null)}
+                  className="text-gray-500 hover:text-gray-700"
+                >
+                  <X size={24} />
+                </button>
+              </div>
             </div>
             
             <div className="p-6 overflow-y-auto flex-1">
@@ -186,11 +336,11 @@ export default function KBPage() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white">
               <h3 className="text-xl font-bold">Yeni KB Dökümanı</h3>
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => { setShowCreateModal(false); resetForm(); }}
                 className="text-gray-500 hover:text-gray-700"
               >
                 <X size={24} />
@@ -198,53 +348,70 @@ export default function KBPage() {
             </div>
 
             <div className="p-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                <p className="text-sm text-blue-700">
-                  ℹ️ <strong>Not:</strong> KB dökümanları dosya sistemi üzerinden yönetilir. 
-                  Yeni döküman oluşturmak için:
-                </p>
-                <div className="mt-3 bg-white rounded p-3">
-                  <code className="text-xs block">cd kb/scripts</code>
-                  <code className="text-xs block">./create-doc.js</code>
-                </div>
-                <p className="text-xs text-blue-600 mt-2">
-                  Veya <code className="text-xs">kb/templates/</code> altındaki şablonları kullanın.
-                </p>
-              </div>
-
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Döküman Tipi
-                  </label>
-                  <select
-                    value={formType}
-                    onChange={(e) => setFormType(e.target.value)}
-                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
-                  >
-                    <option value="troubleshooting">Troubleshooting</option>
-                    <option value="faq">FAQ</option>
-                    <option value="howto">How-to</option>
-                    <option value="release-note">Release Note</option>
-                    <option value="known-issue">Known Issue</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Başlık
+                      Döküman Tipi *
                     </label>
-                    <input
-                      type="text"
-                      value={formTitle}
-                      onChange={(e) => setFormTitle(e.target.value)}
+                    <select
+                      value={formType}
+                      onChange={(e) => setFormType(e.target.value)}
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
-                    />
+                    >
+                      <option value="troubleshooting">Troubleshooting</option>
+                      <option value="faq">FAQ</option>
+                      <option value="howto">How-to</option>
+                      <option value="release-note">Release Note</option>
+                      <option value="known-issue">Known Issue</option>
+                    </select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Modül
+                      Dil *
+                    </label>
+                    <select
+                      value={formLang}
+                      onChange={(e) => setFormLang(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                    >
+                      <option value="tr">Türkçe</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Öncelik *
+                    </label>
+                    <select
+                      value={formPriority}
+                      onChange={(e) => setFormPriority(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                    >
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Başlık *
+                  </label>
+                  <input
+                    type="text"
+                    value={formTitle}
+                    onChange={(e) => setFormTitle(e.target.value)}
+                    placeholder="Örn: Yazıcı yazdırmıyor"
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Modül *
                     </label>
                     <input
                       type="text"
@@ -254,9 +421,6 @@ export default function KBPage() {
                       className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
                     />
                   </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Intent
@@ -283,20 +447,6 @@ export default function KBPage() {
                       <option value="admin">Admin</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Öncelik
-                    </label>
-                    <select
-                      value={formPriority}
-                      onChange={(e) => setFormPriority(e.target.value)}
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
-                    >
-                      <option value="high">High</option>
-                      <option value="medium">Medium</option>
-                      <option value="low">Low</option>
-                    </select>
-                  </div>
                 </div>
 
                 <div>
@@ -311,20 +461,173 @@ export default function KBPage() {
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
                   />
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    İçerik (Markdown) *
+                  </label>
+                  <textarea
+                    value={formContent}
+                    onChange={(e) => setFormContent(e.target.value)}
+                    rows={15}
+                    placeholder="## Amaç&#10;&#10;Bu döküman...&#10;&#10;## Adımlar&#10;&#10;1. Birinci adım&#10;2. İkinci adım"
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500 font-mono text-sm"
+                  />
+                </div>
               </div>
 
               <div className="flex gap-2 justify-end mt-6">
                 <button
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => { setShowCreateModal(false); resetForm(); }}
                   className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
                 >
                   İptal
                 </button>
                 <button
-                  onClick={handleCreateDocument}
-                  className="px-4 py-2 bg-kerzz-600 text-white rounded-lg hover:bg-kerzz-700"
+                  onClick={handleCreate}
+                  disabled={createMutation.isPending}
+                  className="px-4 py-2 bg-kerzz-600 text-white rounded-lg hover:bg-kerzz-700 disabled:opacity-50 flex items-center gap-2"
                 >
-                  Oluştur
+                  <Save size={18} />
+                  {createMutation.isPending ? 'Oluşturuluyor...' : 'Oluştur'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {showEditModal && editingDoc && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white">
+              <h3 className="text-xl font-bold">Dökümanı Düzenle</h3>
+              <button
+                onClick={() => { setShowEditModal(false); setEditingDoc(null); resetForm(); }}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm">
+                <p className="text-blue-700">
+                  <strong>ID:</strong> <code className="text-xs">{editingDoc.metadata.id}</code>
+                </p>
+                <p className="text-blue-600 text-xs mt-1">
+                  ID ve döküman tipi değiştirilemez. Dosya: {editingDoc.filePath}
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Başlık *
+                  </label>
+                  <input
+                    type="text"
+                    value={formTitle}
+                    onChange={(e) => setFormTitle(e.target.value)}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Modül *
+                    </label>
+                    <input
+                      type="text"
+                      value={formModule}
+                      onChange={(e) => setFormModule(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Intent
+                    </label>
+                    <input
+                      type="text"
+                      value={formIntent}
+                      onChange={(e) => setFormIntent(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Rol
+                    </label>
+                    <select
+                      value={formRole}
+                      onChange={(e) => setFormRole(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                    >
+                      <option value="user">User</option>
+                      <option value="technician">Technician</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Öncelik
+                    </label>
+                    <select
+                      value={formPriority}
+                      onChange={(e) => setFormPriority(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                    >
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tags (virgülle ayırın)
+                    </label>
+                    <input
+                      type="text"
+                      value={formTags}
+                      onChange={(e) => setFormTags(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    İçerik (Markdown) *
+                  </label>
+                  <textarea
+                    value={formContent}
+                    onChange={(e) => setFormContent(e.target.value)}
+                    rows={15}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-kerzz-500 font-mono text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end mt-6">
+                <button
+                  onClick={() => { setShowEditModal(false); setEditingDoc(null); resetForm(); }}
+                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  İptal
+                </button>
+                <button
+                  onClick={handleUpdate}
+                  disabled={updateMutation.isPending}
+                  className="px-4 py-2 bg-kerzz-600 text-white rounded-lg hover:bg-kerzz-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  <Save size={18} />
+                  {updateMutation.isPending ? 'Kaydediliyor...' : 'Kaydet'}
                 </button>
               </div>
             </div>
@@ -346,8 +649,24 @@ export default function KBPage() {
           )}
         </div>
         <div className="flex gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".md"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
           <button
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadMutation.isPending}
+            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+            title="Markdown dosyası yükle"
+          >
+            <Upload size={18} />
+            {uploadMutation.isPending ? 'Yükleniyor...' : 'Dosya Yükle'}
+          </button>
+          <button
+            onClick={() => { setShowCreateModal(true); resetForm(); }}
             className="flex items-center gap-2 px-4 py-2 bg-kerzz-600 text-white rounded-lg hover:bg-kerzz-700"
           >
             <Plus size={18} />
@@ -364,10 +683,10 @@ export default function KBPage() {
           <button
             onClick={() => syncMutation.mutate()}
             disabled={syncMutation.isPending}
-            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2 text-kerzz-600 bg-kerzz-50 hover:bg-kerzz-100 rounded-lg disabled:opacity-50"
           >
             <Upload size={18} />
-            {syncMutation.isPending ? 'Sync ediliyor...' : 'Vector Sync'}
+            {syncMutation.isPending ? 'Sync...' : 'Vector Sync'}
           </button>
         </div>
       </div>
@@ -443,9 +762,11 @@ export default function KBPage() {
       {!filteredDocs?.length ? (
         <div className="text-center py-12 bg-white rounded-lg shadow">
           <FileText className="mx-auto text-gray-400 mb-4" size={48} />
-          <p className="text-gray-500">Henüz KB dökümanı yok</p>
+          <p className="text-gray-500">
+            {searchQuery || filterModule || filterDocType ? 'Filtre kriterlerine uygun döküman bulunamadı' : 'Henüz KB dökümanı yok'}
+          </p>
           <p className="text-sm text-gray-400 mt-2">
-            "Yeni Döküman" ile başlayabilirsiniz
+            {!searchQuery && !filterModule && !filterDocType && '"Yeni Döküman" ile başlayabilirsiniz'}
           </p>
         </div>
       ) : (
@@ -458,11 +779,13 @@ export default function KBPage() {
             return (
               <div
                 key={doc.metadata.id}
-                className="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4 cursor-pointer"
-                onClick={() => setViewDoc(doc)}
+                className="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4"
               >
                 <div className="flex items-start justify-between">
-                  <div className="flex-1">
+                  <div 
+                    className="flex-1 cursor-pointer"
+                    onClick={() => setViewDoc(doc)}
+                  >
                     <div className="flex items-center gap-2 mb-2">
                       <Icon size={20} className="text-gray-400" />
                       <h3 className="font-semibold text-lg">{doc.metadata.title}</h3>
@@ -489,6 +812,23 @@ export default function KBPage() {
                         </span>
                       ))}
                     </div>
+                  </div>
+                  <div className="flex gap-2 ml-4">
+                    <button
+                      onClick={() => handleEdit(doc)}
+                      className="text-blue-600 hover:text-blue-700 p-2"
+                      title="Düzenle"
+                    >
+                      <Edit2 size={18} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(doc)}
+                      disabled={deleteMutation.isPending}
+                      className="text-red-600 hover:text-red-700 p-2 disabled:opacity-50"
+                      title="Sil"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
                 </div>
               </div>

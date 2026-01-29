@@ -85,4 +85,67 @@ export class KBController {
   reloadKB() {
     return this.kbService.reload();
   }
+
+  /**
+   * Create new KB document
+   */
+  @Post('create')
+  async createDocument(@Body() body: {
+    metadata: {
+      title: string;
+      lang?: string;
+      docType?: string;
+      intent?: string;
+      role?: string;
+      product?: string;
+      module: string;
+      tags?: string[];
+      priority?: string;
+      [key: string]: any;
+    };
+    content: string;
+  }) {
+    return this.kbService.createDocument(body.metadata, body.content);
+  }
+
+  /**
+   * Update KB document
+   */
+  @Post(':id/update')
+  async updateDocument(
+    @Param('id') id: string,
+    @Body() body: {
+      metadata: {
+        title?: string;
+        module?: string;
+        intent?: string;
+        role?: string;
+        tags?: string[];
+        priority?: string;
+        [key: string]: any;
+      };
+      content: string;
+    }
+  ) {
+    return this.kbService.updateDocument(id, body.metadata, body.content);
+  }
+
+  /**
+   * Delete KB document
+   */
+  @Post(':id/delete')
+  async deleteDocument(@Param('id') id: string) {
+    return this.kbService.deleteDocument(id);
+  }
+
+  /**
+   * Upload markdown file
+   */
+  @Post('upload')
+  async uploadMarkdownFile(@Body() body: {
+    filename: string;
+    content: string;
+  }) {
+    return this.kbService.uploadMarkdownFile(body.filename, body.content);
+  }
 }

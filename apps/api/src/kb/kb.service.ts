@@ -284,4 +284,182 @@ export class KBService {
       byPriority,
     };
   }
+
+  /**
+   * Create new KB document
+   */
+  async createDocument(metadata: Partial<KBMetadata>, content: string) {
+    // Generate slug from title
+    const slug = metadata.title
+      ?.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    
+    // Generate ID
+    const id = `kb_${metadata.lang}_${metadata.docType}_${slug}_v1`;
+    
+    // Set defaults
+    const now = new Date().toISOString().split('T')[0];
+    const fullMetadata: KBMetadata = {
+      id,
+      title: metadata.title || 'Untitled',
+      lang: metadata.lang || 'tr',
+      docType: metadata.docType || 'howto',
+      intent: metadata.intent || slug || 'general',
+      role: metadata.role || 'user',
+      product: metadata.product || 'kerzz_pos',
+      module: metadata.module || 'general',
+      version: metadata.version || { min: null, max: null },
+      tags: metadata.tags || [],
+      priority: metadata.priority || 'medium',
+      updated_at: now,
+      ...metadata,
+    };
+    
+    // Create file content with frontmatter
+    const frontmatter = yaml.dump(fullMetadata);
+    const fileContent = `---\n${frontmatter}---\n\n${content}`;
+    
+    // Determine file path
+    const docTypeDir = fullMetadata.docType === 'release-note' ? 'release-notes' : fullMetadata.docType;
+    const dir = path.join(this.kbRoot, fullMetadata.lang, docTypeDir);
+    const filePath = path.join(dir, `${slug}.md`);
+    
+    // Ensure directory exists
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    // Write file
+    fs.writeFileSync(filePath, fileContent, 'utf8');
+    
+    // Load into memory
+    this.loadDocument(filePath);
+    
+    // Add to vector store
+    const text = `${fullMetadata.title}\n\n${content}`;
+    await this.vector.addDocument(id, text, {
+      ...fullMetadata,
+      kb_type: 'knowledge_base',
+      kb_path: path.relative(this.kbRoot, filePath),
+    });
+    
+    console.log(`✅ KB: Created ${id}`);
+    
+    return { id, filePath: path.relative(this.kbRoot, filePath) };
+  }
+
+  /**
+   * Update KB document
+   */
+  async updateDocument(id: string, metadata: Partial<KBMetadata>, content: string) {
+    const doc = this.documents.get(id);
+    if (!doc) {
+      throw new Error(`Document not found: ${id}`);
+    }
+    
+    // Update metadata
+    const now = new Date().toISOString().split('T')[0];
+    const updatedMetadata: KBMetadata = {
+      ...doc.metadata,
+      ...metadata,
+      id, // Keep original ID
+      updated_at: now,
+    };
+    
+    // Create updated file content
+    const frontmatter = yaml.dump(updatedMetadata);
+    const fileContent = `---\n${frontmatter}---\n\n${content}`;
+    
+    // Write to file
+    const fullPath = path.join(this.kbRoot, doc.filePath);
+    fs.writeFileSync(fullPath, fileContent, 'utf8');
+    
+    // Update in memory
+    this.documents.set(id, {
+      metadata: updatedMetadata,
+      content,
+      filePath: doc.filePath,
+    });
+    
+    // Update vector store
+    await this.vector.deleteDocument(id);
+    const text = `${updatedMetadata.title}\n\n${content}`;
+    await this.vector.addDocument(id, text, {
+      ...updatedMetadata,
+      kb_type: 'knowledge_base',
+      kb_path: doc.filePath,
+    });
+    
+    console.log(`✅ KB: Updated ${id}`);
+    
+    return { id, filePath: doc.filePath };
+  }
+
+  /**
+   * Delete KB document
+   */
+  async deleteDocument(id: string) {
+    const doc = this.documents.get(id);
+    if (!doc) {
+      throw new Error(`Document not found: ${id}`);
+    }
+    
+    // Delete file
+    const fullPath = path.join(this.kbRoot, doc.filePath);
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+    }
+    
+    // Remove from memory
+    this.documents.delete(id);
+    
+    // Remove from vector store
+    await this.vector.deleteDocument(id);
+    
+    console.log(`✅ KB: Deleted ${id}`);
+    
+    return { id, deleted: true };
+  }
+
+  /**
+   * Upload markdown file
+   */
+  async uploadMarkdownFile(filename: string, content: string) {
+    // Parse frontmatter
+    const { metadata, body } = this.parseFrontmatter(content);
+    
+    if (!metadata || !metadata.id) {
+      throw new Error('Invalid markdown file: missing frontmatter or id');
+    }
+    
+    // Determine file path from metadata
+    const docTypeDir = metadata.docType === 'release-note' ? 'release-notes' : metadata.docType;
+    const dir = path.join(this.kbRoot, metadata.lang, docTypeDir);
+    const slug = metadata.id.split('_').slice(-2, -1)[0]; // Extract slug from id
+    const filePath = path.join(dir, `${slug}.md`);
+    
+    // Ensure directory exists
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    // Write file
+    fs.writeFileSync(filePath, content, 'utf8');
+    
+    // Load into memory
+    this.loadDocument(filePath);
+    
+    // Add to vector store
+    const text = `${metadata.title}\n\n${body}`;
+    await this.vector.addDocument(metadata.id, text, {
+      ...metadata,
+      kb_type: 'knowledge_base',
+      kb_path: path.relative(this.kbRoot, filePath),
+    });
+    
+    console.log(`✅ KB: Uploaded ${metadata.id}`);
+    
+    return { id: metadata.id, filePath: path.relative(this.kbRoot, filePath) };
+  }
 }

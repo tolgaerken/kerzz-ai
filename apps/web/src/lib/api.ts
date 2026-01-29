@@ -224,6 +224,49 @@ export const kbApi = {
     const { data } = await api.post('/kb/reload');
     return data;
   },
+
+  create: async (metadata: {
+    title: string;
+    lang?: string;
+    docType?: string;
+    intent?: string;
+    role?: string;
+    product?: string;
+    module: string;
+    tags?: string[];
+    priority?: string;
+    [key: string]: any;
+  }, content: string) => {
+    const { data } = await api.post('/kb/create', { metadata, content });
+    return data;
+  },
+
+  update: async (id: string, metadata: {
+    title?: string;
+    module?: string;
+    intent?: string;
+    role?: string;
+    tags?: string[];
+    priority?: string;
+    [key: string]: any;
+  }, content: string) => {
+    const { data } = await api.post(`/kb/${id}/update`, { metadata, content });
+    return data;
+  },
+
+  delete: async (id: string) => {
+    const { data } = await api.post(`/kb/${id}/delete`);
+    return data;
+  },
+
+  upload: async (file: File) => {
+    const content = await file.text();
+    const { data } = await api.post('/kb/upload', { 
+      filename: file.name, 
+      content 
+    });
+    return data;
+  },
 };
 
 export default api;
