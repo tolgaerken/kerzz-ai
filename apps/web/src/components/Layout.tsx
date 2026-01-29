@@ -1,9 +1,10 @@
 import { Outlet, NavLink } from 'react-router-dom';
-import { FileText, Upload, MessageSquare, Settings } from 'lucide-react';
+import { FileText, Upload, MessageSquare, Settings, BookOpen } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: FileText, label: 'Dökümanlar' },
   { to: '/upload', icon: Upload, label: 'Yükle' },
+  { to: '/kb', icon: BookOpen, label: 'Knowledge Base' },
   { to: '/chat', icon: MessageSquare, label: 'Chat Test' },
   { to: '/prompts', icon: Settings, label: 'Promptlar' },
 ];

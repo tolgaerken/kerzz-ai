@@ -148,4 +148,82 @@ export const chatApi = {
   },
 };
 
+export interface KBDocument {
+  metadata: {
+    id: string;
+    title: string;
+    lang: string;
+    docType: string;
+    intent: string;
+    role: string;
+    product: string;
+    module: string;
+    version: { min: string | null; max: string | null };
+    tags: string[];
+    priority: string;
+    updated_at: string;
+    [key: string]: any;
+  };
+  content: string;
+  filePath: string;
+}
+
+export interface KBStats {
+  total: number;
+  byType: Record<string, number>;
+  byModule: Record<string, number>;
+  byLang: Record<string, number>;
+  byPriority: Record<string, number>;
+}
+
+export const kbApi = {
+  list: async () => {
+    const { data } = await api.get<KBDocument[]>('/kb');
+    return data;
+  },
+
+  getById: async (id: string) => {
+    const { data } = await api.get<KBDocument>(`/kb/${id}`);
+    return data;
+  },
+
+  stats: async () => {
+    const { data } = await api.get<KBStats>('/kb/stats');
+    return data;
+  },
+
+  search: async (filters: {
+    lang?: string;
+    docType?: string;
+    module?: string;
+    role?: string;
+    priority?: string;
+    tags?: string[];
+    intent?: string;
+  }) => {
+    const { data } = await api.post<KBDocument[]>('/kb/search', filters);
+    return data;
+  },
+
+  find: async (query: string, filters?: {
+    lang?: string;
+    docType?: string;
+    module?: string;
+    role?: string;
+  }, limit = 5) => {
+    const { data } = await api.post<KBDocument[]>('/kb/find', { query, filters, limit });
+    return data;
+  },
+
+  sync: async () => {
+    const { data } = await api.post('/kb/sync');
+    return data;
+  },
+
+  reload: async () => {
+    const { data } = await api.post('/kb/reload');
+    return data;
+  },
+};
+
 export default api;
