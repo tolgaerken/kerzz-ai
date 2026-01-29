@@ -171,7 +171,24 @@ export class VectorService implements OnModuleInit {
       }
     }
 
-    const context = docs.map((d, i) => `[Kaynak ${i + 1}]\n${d.text}`).join('\n\n');
+    // Format context intelligently - KB documents should be formatted naturally
+    const context = docs.map((d, i) => {
+      const isKB = d.metadata?.kb_type === 'knowledge_base';
+      if (isKB) {
+        // KB documents: extract only the content part (skip YAML frontmatter if present)
+        let text = d.text as string;
+        // If text contains frontmatter, extract content after "---"
+        const parts = text.split(/^---$/m);
+        if (parts.length >= 3) {
+          // Has frontmatter: use content after second ---
+          text = parts.slice(2).join('---').trim();
+        }
+        return `[KB Dökümanı ${i + 1}]\n${text}`;
+      } else {
+        // Regular documents
+        return `[Kaynak ${i + 1}]\n${d.text}`;
+      }
+    }).join('\n\n');
     
     // Load system prompts from file
     const prompts = this.promptsService.getPrompts();
@@ -390,7 +407,24 @@ Kurallar:
       }
     }
 
-    const context = docs.map((d, i) => `[Kaynak ${i + 1}]\n${d.text}`).join('\n\n');
+    // Format context intelligently - KB documents should be formatted naturally
+    const context = docs.map((d, i) => {
+      const isKB = d.metadata?.kb_type === 'knowledge_base';
+      if (isKB) {
+        // KB documents: extract only the content part (skip YAML frontmatter if present)
+        let text = d.text as string;
+        // If text contains frontmatter, extract content after second ---
+        const parts = text.split(/^---$/m);
+        if (parts.length >= 3) {
+          // Has frontmatter: use content after second ---
+          text = parts.slice(2).join('---').trim();
+        }
+        return `[KB Dökümanı ${i + 1}]\n${text}`;
+      } else {
+        // Regular documents
+        return `[Kaynak ${i + 1}]\n${d.text}`;
+      }
+    }).join('\n\n');
     const prompts = this.promptsService.getPrompts();
     const systemPrompt = mode === 'customer' ? prompts.customer : prompts.technician;
 

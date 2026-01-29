@@ -228,6 +228,7 @@ export class KBService {
   async syncToVectorStore() {
     console.log('🔄 Syncing KB to vector store...');
     
+    const crypto = require('crypto');
     let synced = 0;
     
     for (const doc of this.documents.values()) {
@@ -237,10 +238,14 @@ export class KBService {
         ...doc.metadata,
         kb_type: 'knowledge_base',
         kb_path: doc.filePath,
+        kb_original_id: doc.metadata.id, // Store original ID in metadata
       };
       
+      // Use MD5 hash of original ID as vector store ID (to avoid special characters)
+      const vectorId = crypto.createHash('md5').update(doc.metadata.id).digest('hex');
+      
       try {
-        await this.vector.addDocument(doc.metadata.id, text, metadata);
+        await this.vector.addDocument(vectorId, text, metadata);
         synced++;
       } catch (error) {
         console.error(`❌ Failed to sync ${doc.metadata.id}:`, error.message);
@@ -338,12 +343,15 @@ export class KBService {
     // Load into memory
     this.loadDocument(filePath);
     
-    // Add to vector store
+    // Add to vector store (use hash as ID to avoid special characters)
+    const crypto = require('crypto');
+    const vectorId = crypto.createHash('md5').update(id).digest('hex');
     const text = `${fullMetadata.title}\n\n${content}`;
-    await this.vector.addDocument(id, text, {
+    await this.vector.addDocument(vectorId, text, {
       ...fullMetadata,
       kb_type: 'knowledge_base',
       kb_path: path.relative(this.kbRoot, filePath),
+      kb_original_id: id,
     });
     
     console.log(`✅ KB: Created ${id}`);
@@ -384,13 +392,16 @@ export class KBService {
       filePath: doc.filePath,
     });
     
-    // Update vector store
-    await this.vector.deleteDocument(id);
+    // Update vector store (use hash as ID)
+    const crypto = require('crypto');
+    const vectorId = crypto.createHash('md5').update(id).digest('hex');
+    await this.vector.deleteDocument(vectorId);
     const text = `${updatedMetadata.title}\n\n${content}`;
-    await this.vector.addDocument(id, text, {
+    await this.vector.addDocument(vectorId, text, {
       ...updatedMetadata,
       kb_type: 'knowledge_base',
       kb_path: doc.filePath,
+      kb_original_id: id,
     });
     
     console.log(`✅ KB: Updated ${id}`);
@@ -416,8 +427,10 @@ export class KBService {
     // Remove from memory
     this.documents.delete(id);
     
-    // Remove from vector store
-    await this.vector.deleteDocument(id);
+    // Remove from vector store (use hash as ID)
+    const crypto = require('crypto');
+    const vectorId = crypto.createHash('md5').update(id).digest('hex');
+    await this.vector.deleteDocument(vectorId);
     
     console.log(`✅ KB: Deleted ${id}`);
     
@@ -452,12 +465,15 @@ export class KBService {
     // Load into memory
     this.loadDocument(filePath);
     
-    // Add to vector store
+    // Add to vector store (use hash as ID)
+    const crypto = require('crypto');
+    const vectorId = crypto.createHash('md5').update(metadata.id).digest('hex');
     const text = `${metadata.title}\n\n${body}`;
-    await this.vector.addDocument(metadata.id, text, {
+    await this.vector.addDocument(vectorId, text, {
       ...metadata,
       kb_type: 'knowledge_base',
       kb_path: path.relative(this.kbRoot, filePath),
+      kb_original_id: metadata.id,
     });
     
     console.log(`✅ KB: Uploaded ${metadata.id}`);
