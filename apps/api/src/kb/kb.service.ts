@@ -1,0 +1,287 @@
+import { Injectable } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as yaml from 'js-yaml';
+import { VectorService } from '../vector/vector.service';
+
+interface KBMetadata {
+  id: string;
+  title: string;
+  lang: string;
+  docType: string;
+  intent: string;
+  role: string;
+  product: string;
+  module: string;
+  version: { min: string | null; max: string | null };
+  tags: string[];
+  priority: string;
+  updated_at: string;
+  [key: string]: any;
+}
+
+interface KBDocument {
+  metadata: KBMetadata;
+  content: string;
+  filePath: string;
+}
+
+@Injectable()
+export class KBService {
+  private kbRoot: string;
+  private documents: Map<string, KBDocument> = new Map();
+
+  constructor(private vector: VectorService) {
+    this.kbRoot = path.join(process.cwd(), 'kb');
+    this.loadAllDocuments();
+  }
+
+  /**
+   * Load all KB documents from filesystem
+   */
+  private loadAllDocuments() {
+    const langs = ['tr', 'en'];
+    
+    for (const lang of langs) {
+      const langDir = path.join(this.kbRoot, lang);
+      if (fs.existsSync(langDir)) {
+        this.scanDirectory(langDir);
+      }
+    }
+    
+    console.log(`✅ KB: Loaded ${this.documents.size} documents`);
+  }
+
+  /**
+   * Recursively scan directory for .md files
+   */
+  private scanDirectory(dir: string) {
+    if (!fs.existsSync(dir)) return;
+    
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      
+      if (entry.isDirectory()) {
+        this.scanDirectory(fullPath);
+      } else if (entry.name.endsWith('.md') && entry.name !== 'README.md') {
+        this.loadDocument(fullPath);
+      }
+    }
+  }
+
+  /**
+   * Load single document and parse frontmatter
+   */
+  private loadDocument(filePath: string) {
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const { metadata, body } = this.parseFrontmatter(content);
+      
+      if (!metadata || !metadata.id) {
+        console.warn(`⚠️  KB: No valid metadata in ${filePath}`);
+        return;
+      }
+      
+      const doc: KBDocument = {
+        metadata,
+        content: body,
+        filePath: path.relative(this.kbRoot, filePath),
+      };
+      
+      this.documents.set(metadata.id, doc);
+    } catch (error) {
+      console.error(`❌ KB: Error loading ${filePath}:`, error.message);
+    }
+  }
+
+  /**
+   * Parse YAML frontmatter from markdown
+   */
+  private parseFrontmatter(content: string): { metadata: KBMetadata | null; body: string } {
+    const match = content.match(/^---\n([\s\S]+?)\n---\n([\s\S]*)$/);
+    
+    if (!match) {
+      return { metadata: null, body: content };
+    }
+    
+    try {
+      const metadata = yaml.load(match[1]) as KBMetadata;
+      const body = match[2].trim();
+      return { metadata, body };
+    } catch (error) {
+      console.error('YAML parse error:', error.message);
+      return { metadata: null, body: content };
+    }
+  }
+
+  /**
+   * Get all documents
+   */
+  getAllDocuments(): KBDocument[] {
+    return Array.from(this.documents.values());
+  }
+
+  /**
+   * Get document by ID
+   */
+  getDocumentById(id: string): KBDocument | undefined {
+    return this.documents.get(id);
+  }
+
+  /**
+   * Search documents by filters
+   */
+  searchDocuments(filters: {
+    lang?: string;
+    docType?: string;
+    module?: string;
+    role?: string;
+    priority?: string;
+    tags?: string[];
+    intent?: string;
+  }): KBDocument[] {
+    let results = this.getAllDocuments();
+    
+    if (filters.lang) {
+      results = results.filter(d => d.metadata.lang === filters.lang);
+    }
+    
+    if (filters.docType) {
+      results = results.filter(d => d.metadata.docType === filters.docType);
+    }
+    
+    if (filters.module) {
+      results = results.filter(d => d.metadata.module === filters.module);
+    }
+    
+    if (filters.role) {
+      results = results.filter(d => d.metadata.role === filters.role);
+    }
+    
+    if (filters.priority) {
+      results = results.filter(d => d.metadata.priority === filters.priority);
+    }
+    
+    if (filters.intent) {
+      results = results.filter(d => d.metadata.intent === filters.intent);
+    }
+    
+    if (filters.tags && filters.tags.length > 0) {
+      results = results.filter(d => 
+        filters.tags.some(tag => d.metadata.tags?.includes(tag))
+      );
+    }
+    
+    // Sort by priority: high > medium > low
+    const priorityOrder = { high: 3, medium: 2, low: 1 };
+    results.sort((a, b) => {
+      const aPriority = priorityOrder[a.metadata.priority] || 0;
+      const bPriority = priorityOrder[b.metadata.priority] || 0;
+      return bPriority - aPriority;
+    });
+    
+    return results;
+  }
+
+  /**
+   * Find relevant document by semantic search (using vector similarity)
+   */
+  async findRelevantDocuments(query: string, filters?: {
+    lang?: string;
+    docType?: string;
+    module?: string;
+    role?: string;
+  }, limit = 5) {
+    // First, filter by metadata
+    const candidates = this.searchDocuments(filters || {});
+    
+    if (candidates.length === 0) {
+      return [];
+    }
+    
+    // Then, use vector similarity for ranking
+    // We'll search using the query and filter results
+    const searchResults = await this.vector.search(query, limit * 2);
+    
+    // Match vector results with KB documents
+    const matched = searchResults
+      .map(result => {
+        const doc = Array.from(this.documents.values()).find(d => 
+          d.content.includes(result.text.substring(0, 100)) ||
+          d.metadata.id === result.id
+        );
+        return doc ? { ...doc, score: result.score } : null;
+      })
+      .filter(d => d !== null)
+      .slice(0, limit);
+    
+    return matched;
+  }
+
+  /**
+   * Sync all KB documents to vector store
+   */
+  async syncToVectorStore() {
+    console.log('🔄 Syncing KB to vector store...');
+    
+    let synced = 0;
+    
+    for (const doc of this.documents.values()) {
+      // Combine metadata and content for better retrieval
+      const text = `${doc.metadata.title}\n\n${doc.content}`;
+      const metadata = {
+        ...doc.metadata,
+        kb_type: 'knowledge_base',
+        kb_path: doc.filePath,
+      };
+      
+      try {
+        await this.vector.addDocument(doc.metadata.id, text, metadata);
+        synced++;
+      } catch (error) {
+        console.error(`❌ Failed to sync ${doc.metadata.id}:`, error.message);
+      }
+    }
+    
+    console.log(`✅ Synced ${synced}/${this.documents.size} documents to vector store`);
+    return { synced, total: this.documents.size };
+  }
+
+  /**
+   * Reload all documents from filesystem
+   */
+  reload() {
+    this.documents.clear();
+    this.loadAllDocuments();
+    return { loaded: this.documents.size };
+  }
+
+  /**
+   * Get statistics
+   */
+  getStats() {
+    const docs = this.getAllDocuments();
+    
+    const byType = {};
+    const byModule = {};
+    const byLang = {};
+    const byPriority = {};
+    
+    for (const doc of docs) {
+      byType[doc.metadata.docType] = (byType[doc.metadata.docType] || 0) + 1;
+      byModule[doc.metadata.module] = (byModule[doc.metadata.module] || 0) + 1;
+      byLang[doc.metadata.lang] = (byLang[doc.metadata.lang] || 0) + 1;
+      byPriority[doc.metadata.priority] = (byPriority[doc.metadata.priority] || 0) + 1;
+    }
+    
+    return {
+      total: docs.length,
+      byType,
+      byModule,
+      byLang,
+      byPriority,
+    };
+  }
+}

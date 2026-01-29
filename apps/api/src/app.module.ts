@@ -4,6 +4,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { ChatModule } from './chat/chat.module';
 import { VectorModule } from './vector/vector.module';
 import { PromptsModule } from './prompts/prompts.module';
+import { KBModule } from './kb/kb.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { PromptsModule } from './prompts/prompts.module';
     DocumentsModule,
     ChatModule,
     PromptsModule,
+    KBModule,
   ],
 })
 export class AppModule {}
