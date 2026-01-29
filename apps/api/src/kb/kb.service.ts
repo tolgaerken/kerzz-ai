@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { VectorService } from '../vector/vector.service';
 
-interface KBMetadata {
+export interface KBMetadata {
   id: string;
   title: string;
   lang: string;
@@ -20,7 +20,7 @@ interface KBMetadata {
   [key: string]: any;
 }
 
-interface KBDocument {
+export interface KBDocument {
   metadata: KBMetadata;
   content: string;
   filePath: string;
@@ -170,7 +170,7 @@ export class KBService {
     
     if (filters.tags && filters.tags.length > 0) {
       results = results.filter(d => 
-        filters.tags.some(tag => d.metadata.tags?.includes(tag))
+        filters.tags?.some(tag => d.metadata.tags?.includes(tag))
       );
     }
     
@@ -208,9 +208,11 @@ export class KBService {
     // Match vector results with KB documents
     const matched = searchResults
       .map(result => {
+        const resultText = result.text as string;
+        const resultId = (result.metadata as any)?.id;
         const doc = Array.from(this.documents.values()).find(d => 
-          d.content.includes(result.text.substring(0, 100)) ||
-          d.metadata.id === result.id
+          d.content.includes(resultText.substring(0, 100)) ||
+          d.metadata.id === resultId
         );
         return doc ? { ...doc, score: result.score } : null;
       })

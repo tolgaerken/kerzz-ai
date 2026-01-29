@@ -63,7 +63,7 @@ export default function KBPage() {
   const [formContent, setFormContent] = useState('');
   const [formLang, setFormLang] = useState('tr');
 
-  const { data: documents, isLoading, refetch } = useQuery({
+  const { data: documents, isLoading } = useQuery({
     queryKey: ['kb-documents'],
     queryFn: () => kbApi.list(),
   });
