@@ -322,11 +322,25 @@ Kurallar:
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : content);
       
-      return {
+      // Format sources for display (extract content, remove metadata)
+        const formattedSources = docs.map(d => {
+          let text = d.text as string;
+          const isKB = d.metadata?.kb_type === 'knowledge_base';
+          if (isKB) {
+            // Extract content after frontmatter
+            const parts = text.split(/^---$/m);
+            if (parts.length >= 3) {
+              text = parts.slice(2).join('---').trim();
+            }
+          }
+          return { text: text.substring(0, 200), score: d.score };
+        });
+
+        return {
         action: parsed.action || 'answer',
         answer: parsed.answer || content,
         parameters: parsed.parameters,
-        sources: docs.map(d => ({ text: (d.text as string)?.substring(0, 200), score: d.score })),
+        sources: formattedSources,
         confidence: docs[0].score > 0.6 ? 'high' : 'medium',
         mode,
       };
@@ -336,10 +350,23 @@ Kurallar:
       // Strip think tags from fallback too
       content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
       
+      // Format sources for fallback too
+      const formattedSources = docs.map(d => {
+        let text = d.text as string;
+        const isKB = d.metadata?.kb_type === 'knowledge_base';
+        if (isKB) {
+          const parts = text.split(/^---$/m);
+          if (parts.length >= 3) {
+            text = parts.slice(2).join('---').trim();
+          }
+        }
+        return { text: text.substring(0, 200), score: d.score };
+      });
+      
       return {
         action: 'answer',
         answer: content,
-        sources: docs.map(d => ({ text: (d.text as string)?.substring(0, 200), score: d.score })),
+        sources: formattedSources,
         confidence: docs[0].score > 0.6 ? 'high' : 'medium',
         mode,
       };
