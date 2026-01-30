@@ -3,16 +3,20 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { PromptsService } from '../prompts/prompts.service';
+import { FunctionsService } from '../functions/functions.service';
+import { AVAILABLE_TOOLS } from '../functions/function-definitions';
 
 @Injectable()
 export class VectorService implements OnModuleInit {
   private qdrant: QdrantClient;
   private openai: OpenAI;
   private readonly collectionName = 'kerzz_docs';
+  private functionCallingEnabled: boolean;
 
   constructor(
     private config: ConfigService,
     private promptsService: PromptsService,
+    private functionsService: FunctionsService,
   ) {
     this.qdrant = new QdrantClient({
       host: config.get('QDRANT_HOST', 'localhost'),
@@ -23,6 +27,9 @@ export class VectorService implements OnModuleInit {
       baseURL: config.get('LLM_BASE_URL', 'http://localhost:8000/v1'),
       apiKey: 'not-needed',
     });
+
+    // Function calling varsayılan olarak aktif
+    this.functionCallingEnabled = config.get('FUNCTION_CALLING_ENABLED', 'true') === 'true';
   }
 
   async onModuleInit() {
@@ -304,73 +311,30 @@ Kurallar:
       content: `Context (dokümantasyon):\n${context}\n\nSoru: ${query}\n\nCevap (JSON formatında):`,
     });
 
-    const response = await this.openai.chat.completions.create({
+    // LLM çağrısı - function calling opsiyonel
+    const llmOptions: any = {
       model: this.config.get('LLM_MODEL', 'nvidia/Qwen3-32B-FP4'),
       messages,
       max_tokens: 700,
       temperature: 0.3,
-    });
+    };
 
-    try {
-      // Parse JSON response (handle DeepSeek R1 <think> tags)
-      let content = response.choices[0].message.content || '{}';
-      
-      // Remove <think>...</think> tags if present (DeepSeek R1)
-      content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      
-      // Extract JSON
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : content);
-      
-      // Format sources for display (extract content, remove metadata)
-        const formattedSources = docs.map(d => {
-          let text = d.text as string;
-          const isKB = d.metadata?.kb_type === 'knowledge_base';
-          if (isKB) {
-            // Extract content after frontmatter
-            const parts = text.split(/^---$/m);
-            if (parts.length >= 3) {
-              text = parts.slice(2).join('---').trim();
-            }
-          }
-          return { text: text.substring(0, 200), score: d.score };
-        });
-
-        return {
-        action: parsed.action || 'answer',
-        answer: parsed.answer || content,
-        parameters: parsed.parameters,
-        sources: formattedSources,
-        confidence: docs[0].score > 0.6 ? 'high' : 'medium',
-        mode,
-      };
-    } catch (error) {
-      // Fallback if JSON parsing fails
-      let content = response.choices[0].message.content || 'Cevap oluşturulamadı.';
-      // Strip think tags from fallback too
-      content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      
-      // Format sources for fallback too
-      const formattedSources = docs.map(d => {
-        let text = d.text as string;
-        const isKB = d.metadata?.kb_type === 'knowledge_base';
-        if (isKB) {
-          const parts = text.split(/^---$/m);
-          if (parts.length >= 3) {
-            text = parts.slice(2).join('---').trim();
-          }
-        }
-        return { text: text.substring(0, 200), score: d.score };
-      });
-      
-      return {
-        action: 'answer',
-        answer: content,
-        sources: formattedSources,
-        confidence: docs[0].score > 0.6 ? 'high' : 'medium',
-        mode,
-      };
+    // Function calling aktifse tools ekle
+    if (this.functionCallingEnabled) {
+      llmOptions.tools = AVAILABLE_TOOLS;
+      llmOptions.tool_choice = 'auto';
     }
+
+    const response = await this.openai.chat.completions.create(llmOptions);
+    const message = response.choices[0].message;
+
+    // Function call varsa execute et
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      return await this.handleFunctionCall(message, messages, docs, mode);
+    }
+
+    // Normal response işleme
+    return this.parseResponse(message.content || '{}', docs, mode);
   }
 
   async *chatStream(
@@ -513,7 +477,47 @@ Kurallar:
     try {
       const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { action: 'answer', answer: answerContent };
       
-      // Now stream the answer field only
+      // Check if action is a valid function - execute it
+      if (this.functionsService.isValidFunction(parsed.action)) {
+        const functionName = parsed.action;
+        const functionArgs = parsed.parameters || {};
+        
+        console.log(`🔧 Stream fallback function call: ${functionName}`, functionArgs);
+        
+        // Execute function
+        const functionResult = await this.functionsService.execute(functionName, functionArgs);
+        
+        // Stream the combined answer
+        let answerToStream = parsed.answer || '';
+        if (functionResult.success) {
+          answerToStream = answerToStream 
+            ? `${answerToStream}\n\n${functionResult.message}` 
+            : functionResult.message;
+        }
+        
+        for (const char of answerToStream) {
+          yield { type: 'token', content: char };
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+
+        yield {
+          type: 'done',
+          action: 'function_result',
+          parameters: parsed.parameters,
+          confidence: 'high',
+          sources: docs.map(d => ({ text: (d.text as string)?.substring(0, 200), score: d.score })),
+          thinking: thinkingContent.trim(),
+          rawJson: parsed,
+          functionCall: {
+            name: functionName,
+            args: functionArgs,
+            result: functionResult,
+          },
+        };
+        return;
+      }
+      
+      // Normal response - stream the answer
       const answerToStream = parsed.answer || answerContent || 'Cevap oluşturulamadı.';
       for (const char of answerToStream) {
         yield { type: 'token', content: char };
@@ -545,5 +549,175 @@ Kurallar:
         rawJson: null,
       };
     }
+  }
+
+  /**
+   * Function call'ı handle eder ve sonucu LLM'e gönderip final cevap alır
+   */
+  private async handleFunctionCall(
+    message: any,
+    messages: any[],
+    docs: any[],
+    mode: string
+  ) {
+    const toolCall = message.tool_calls[0];
+    const functionName = toolCall.function.name;
+    let functionArgs: Record<string, any>;
+
+    try {
+      functionArgs = JSON.parse(toolCall.function.arguments);
+    } catch {
+      functionArgs = {};
+    }
+
+    console.log(`🔧 Function call detected: ${functionName}`, functionArgs);
+
+    // Fonksiyonu execute et
+    const functionResult = await this.functionsService.execute(functionName, functionArgs);
+
+    // LLM'e fonksiyon sonucunu gönder
+    messages.push(message); // Assistant'ın tool call mesajı
+    messages.push({
+      role: 'tool',
+      tool_call_id: toolCall.id,
+      content: JSON.stringify(functionResult),
+    });
+
+    // LLM'den final cevap al
+    const finalResponse = await this.openai.chat.completions.create({
+      model: this.config.get('LLM_MODEL', 'nvidia/Qwen3-32B-FP4'),
+      messages,
+      max_tokens: 700,
+      temperature: 0.3,
+    });
+
+    const finalContent = finalResponse.choices[0].message.content || '';
+    const formattedSources = this.formatSources(docs);
+
+    // Final response'u parse et
+    try {
+      const cleanContent = finalContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
+      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { answer: cleanContent };
+
+      return {
+        action: parsed.action || 'function_result',
+        answer: parsed.answer || cleanContent,
+        parameters: parsed.parameters,
+        sources: formattedSources,
+        confidence: 'high',
+        mode,
+        functionCall: {
+          name: functionName,
+          args: functionArgs,
+          result: functionResult,
+        },
+      };
+    } catch {
+      return {
+        action: 'function_result',
+        answer: finalContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim(),
+        sources: formattedSources,
+        confidence: 'high',
+        mode,
+        functionCall: {
+          name: functionName,
+          args: functionArgs,
+          result: functionResult,
+        },
+      };
+    }
+  }
+
+  /**
+   * LLM response'unu parse eder
+   */
+  private parseResponse(content: string, docs: any[], mode: string) {
+    const formattedSources = this.formatSources(docs);
+
+    try {
+      // Remove <think>...</think> tags if present (DeepSeek R1)
+      const cleanContent = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      
+      // Extract JSON
+      const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
+      const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleanContent);
+
+      // Action'a göre function çağrısı yap (fallback mekanizması)
+      if (this.functionsService.isValidFunction(parsed.action)) {
+        return this.executeFallbackFunction(parsed, docs, mode);
+      }
+
+      return {
+        action: parsed.action || 'answer',
+        answer: parsed.answer || cleanContent,
+        parameters: parsed.parameters,
+        sources: formattedSources,
+        confidence: docs[0]?.score > 0.6 ? 'high' : 'medium',
+        mode,
+      };
+    } catch {
+      // Fallback if JSON parsing fails
+      const cleanContent = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      
+      return {
+        action: 'answer',
+        answer: cleanContent || 'Cevap oluşturulamadı.',
+        sources: formattedSources,
+        confidence: docs[0]?.score > 0.6 ? 'high' : 'medium',
+        mode,
+      };
+    }
+  }
+
+  /**
+   * Fallback function execution - LLM native tool calling desteklemiyorsa
+   * JSON response'taki action'a göre fonksiyon çağırır
+   */
+  private async executeFallbackFunction(parsed: any, docs: any[], mode: string) {
+    const functionName = parsed.action;
+    const functionArgs = parsed.parameters || {};
+
+    console.log(`🔧 Fallback function call: ${functionName}`, functionArgs);
+
+    const functionResult = await this.functionsService.execute(functionName, functionArgs);
+    const formattedSources = this.formatSources(docs);
+
+    // Fonksiyon sonucunu cevaba ekle
+    let answer = parsed.answer || '';
+    if (functionResult.success) {
+      answer = answer ? `${answer}\n\n${functionResult.message}` : functionResult.message;
+    }
+
+    return {
+      action: 'function_result',
+      answer,
+      parameters: parsed.parameters,
+      sources: formattedSources,
+      confidence: 'high',
+      mode,
+      functionCall: {
+        name: functionName,
+        args: functionArgs,
+        result: functionResult,
+      },
+    };
+  }
+
+  /**
+   * Döküman kaynaklarını formatlar
+   */
+  private formatSources(docs: any[]) {
+    return docs.map(d => {
+      let text = d.text as string;
+      const isKB = d.metadata?.kb_type === 'knowledge_base';
+      if (isKB) {
+        const parts = text.split(/^---$/m);
+        if (parts.length >= 3) {
+          text = parts.slice(2).join('---').trim();
+        }
+      }
+      return { text: text.substring(0, 200), score: d.score };
+    });
   }
 }

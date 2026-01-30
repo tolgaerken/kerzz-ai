@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Send, Bot, User, Loader2 } from 'lucide-react';
-import { chatApi, ChatResponse } from '@/lib/api';
+import { Send, Bot, User, Loader2, Wrench, CheckCircle, XCircle } from 'lucide-react';
+import { chatApi, ChatResponse, FunctionCallResult } from '@/lib/api';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -11,6 +11,7 @@ interface Message {
   confidence?: ChatResponse['confidence'];
   thinking?: string;
   rawJson?: any;
+  functionCall?: FunctionCallResult;
 }
 
 export default function ChatPage() {
@@ -74,6 +75,7 @@ export default function ChatPage() {
               confidence: metadata.confidence,
               thinking: metadata.thinking,
               rawJson: metadata.rawJson,
+              functionCall: metadata.functionCall,
             };
             return updated;
           });
@@ -160,7 +162,50 @@ export default function ChatPage() {
             >
               <p className="whitespace-pre-wrap">{msg.content}</p>
 
-              {msg.action && msg.action !== 'answer' && (
+              {/* Function Call Result */}
+              {msg.functionCall && (
+                <div className="mt-3 pt-3 border-t border-gray-200">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Wrench size={14} className="text-indigo-600" />
+                    <span className="text-xs font-medium text-indigo-700">
+                      Fonksiyon: {msg.functionCall.name}
+                    </span>
+                    {msg.functionCall.result.success ? (
+                      <CheckCircle size={14} className="text-green-600" />
+                    ) : (
+                      <XCircle size={14} className="text-red-600" />
+                    )}
+                  </div>
+                  
+                  {/* Function Arguments */}
+                  {Object.keys(msg.functionCall.args).length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-xs text-gray-500 mb-1">Parametreler:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(msg.functionCall.args).map(([key, value]) => (
+                          <span key={key} className="text-xs px-2 py-0.5 bg-gray-100 rounded">
+                            {key}: {String(value)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Function Result Details */}
+                  {msg.functionCall.result.data && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-indigo-600 cursor-pointer hover:text-indigo-700">
+                        📊 Detaylı Sonuç
+                      </summary>
+                      <pre className="text-xs text-gray-600 mt-2 whitespace-pre-wrap bg-indigo-50 p-2 rounded overflow-x-auto max-h-48">
+                        {JSON.stringify(msg.functionCall.result.data, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )}
+
+              {msg.action && msg.action !== 'answer' && msg.action !== 'function_result' && (
                 <div className="mt-3 pt-3 border-t border-gray-200">
                   <div className="flex items-center gap-2 mb-2">
                     {msg.action === 'ask_clarification' && (

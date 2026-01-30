@@ -32,21 +32,20 @@ export class KBService {
   private documents: Map<string, KBDocument> = new Map();
 
   constructor(private vector: VectorService) {
-    this.kbRoot = path.join(process.cwd(), 'kb');
+    // Monorepo root'taki kb/ klasörüne bak (apps/api'den iki üst dizin)
+    this.kbRoot = path.join(process.cwd(), '..', '..', 'kb');
     this.loadAllDocuments();
   }
 
   /**
    * Load all KB documents from filesystem
+   * Scans entire kb/ directory recursively to support:
+   * - Language-based structure: kb/tr/, kb/en/
+   * - Module-based structure: kb/printing/, kb/payment/, etc.
    */
   private loadAllDocuments() {
-    const langs = ['tr', 'en'];
-    
-    for (const lang of langs) {
-      const langDir = path.join(this.kbRoot, lang);
-      if (fs.existsSync(langDir)) {
-        this.scanDirectory(langDir);
-      }
+    if (fs.existsSync(this.kbRoot)) {
+      this.scanDirectory(this.kbRoot);
     }
     
     console.log(`✅ KB: Loaded ${this.documents.size} documents`);

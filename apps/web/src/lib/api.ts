@@ -10,8 +10,18 @@ export interface Document {
   metadata?: Record<string, any>;
 }
 
+export interface FunctionCallResult {
+  name: string;
+  args: Record<string, any>;
+  result: {
+    success: boolean;
+    message: string;
+    data?: Record<string, any>;
+  };
+}
+
 export interface ChatResponse {
-  action: 'ask_clarification' | 'answer' | 'create_ticket' | 'troubleshoot' | 'schedule_appointment' | 'escalate';
+  action: 'ask_clarification' | 'answer' | 'create_ticket' | 'troubleshoot' | 'schedule_appointment' | 'escalate' | 'function_result' | 'get_printer_status' | 'send_test_print' | 'get_order_info' | 'cancel_order' | 'escalate_to_tech';
   answer: string;
   parameters?: {
     issue_type?: string;
@@ -23,6 +33,7 @@ export interface ChatResponse {
   };
   sources: Array<{ text: string; score: number }>;
   confidence: 'low' | 'medium' | 'high';
+  functionCall?: FunctionCallResult;
 }
 
 export const documentsApi = {

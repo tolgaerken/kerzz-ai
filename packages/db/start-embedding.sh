@@ -1,4 +1,5 @@
 #!/bin/bash
-cd /home/admin/clawd/kerzz-ai/packages/db
+# Navigate to script directory
+cd "$(dirname "$0")"
 source venv/bin/activate
 python embedding_service.py
